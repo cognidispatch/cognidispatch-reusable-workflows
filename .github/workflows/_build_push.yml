@@ -80,7 +80,7 @@ jobs:
       - name: SonarCloud Scan
         if: inputs.sonar_project_key != ''
         uses: sonarsource/sonarcloud-github-action@v3.0.0
-        continue-on-error: true
+        # continue-on-error removed to fail on Sonar errors
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
@@ -141,7 +141,7 @@ jobs:
         with:
           image-ref: ${{ steps.meta.outputs.image_full }}:scan-target
           format: "table"
-          exit-code: "0"
+          exit-code: "1"
           ignore-unfixed: true
           vuln-type: "os,library"
           severity: ${{ inputs.trivy_severity }}
@@ -159,6 +159,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_SERVER_IP=${{ inputs.next_public_server_ip }}
             SERVICE_NAME=${{ inputs.service_name }}
+# Approval gate removed - production deployments no longer require manual approval
 
       # ── Job Summary ─────────────────────────────────────────────────────
       - name: Output Summary

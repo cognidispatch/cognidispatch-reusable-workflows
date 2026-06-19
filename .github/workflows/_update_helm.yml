@@ -1,0 +1,145 @@
+name: Reusable — Update Helm Chart Values
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: "Microservice name slug (e.g., auth-service, frontend)"
+      helm-value-key:
+        required: true
+        type: string
+        description: "The top-level key in values.yaml (e.g., authService, frontend)"
+      image-tag:
+        required: true
+        type: string
+        description: "Docker image tag to set (e.g., v1.0.0 or dev-abc1234)"
+      environment:
+        required: true
+        type: string
+        description: "Target environment: 'dev' or 'production'"
+      helm-repo:
+        required: false
+        type: string
+        default: "cognidispatch/cognidispatch-helm"
+        description: "Helm chart repository (org/repo)"
+      require-approval:
+        required: false
+        type: boolean
+        default: false
+        description: "Set true to require manual approval gate before updating (use for production)"
+    secrets:
+      HELM_REPO_PAT:
+        required: true
+        description: "PAT with write access to cognidispatch-helm repo"
+
+jobs:
+  # ── Optional approval gate (production only) ──────────────────────────
+  approve:
+    name: "⏳ Approval Gate"
+    runs-on: ubuntu-latest
+    if: inputs.require-approval == true
+    environment: ${{ inputs.environment }}
+    outputs:
+      approved-by: ${{ github.actor }}
+    steps:
+      - name: Await manual approval
+        run: |
+          echo "✅ Production deployment approved by: ${{ github.actor }}"
+          echo "## 🔒 Production Approval Gate" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Approved By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | ${{ inputs.service-name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | ${{ inputs.image-tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ── Update Helm values file ──────────────────────────────────────────
+  update-helm:
+    name: "📦 Update Helm Values"
+    runs-on: ubuntu-latest
+    needs: [approve]
+    if: always() && (needs.approve.result == 'success' || needs.approve.result == 'skipped')
+
+    steps:
+      - name: Checkout Helm repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.helm-repo }}
+          token: ${{ secrets.HELM_REPO_PAT }}
+          ref: ${{ inputs.environment }}
+          fetch-depth: 0
+
+      - name: Update image tag in values file
+        run: |
+          ENV="${{ inputs.environment }}"
+          SERVICE="${{ inputs.service-name }}"
+          KEY="${{ inputs.helm-value-key }}"
+          TAG="${{ inputs.image-tag }}"
+
+          # Determine the values file to update
+          VALUES_FILE="microservices/${SERVICE}/values-${ENV}.yaml"
+
+          if [ ! -f "$VALUES_FILE" ]; then
+            echo "::error::Values file not found: $VALUES_FILE"
+            exit 1
+          fi
+
+          echo "Updating $VALUES_FILE → imageTag: $TAG"
+
+          # Use Python for reliable YAML key update
+          python3 - <<EOF
+          import re, sys
+
+          with open("${VALUES_FILE}", "r") as f:
+              content = f.read()
+
+          # Replace imageTag value
+          new_content = re.sub(
+              r'(imageTag:\s*)(["\']?).*?\2(\s*$)',
+              r'\g<1>"${TAG}"\3',
+              content,
+              flags=re.MULTILINE
+          )
+
+          if new_content == content:
+              print("WARNING: imageTag field not found or not updated!", file=sys.stderr)
+              sys.exit(1)
+
+          with open("${VALUES_FILE}", "w") as f:
+              f.write(new_content)
+
+          print(f"✅ Updated imageTag to: ${TAG}")
+          EOF
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add microservices/${{ inputs.service-name }}/values-${{ inputs.environment }}.yaml
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "ci: update ${{ inputs.service-name }} imageTag to ${{ inputs.image-tag }} [${{ inputs.environment }}] [skip ci]"
+
+          # Push with retry on race condition
+          for i in {1..5}; do
+            git pull --rebase origin ${{ inputs.environment }} && \
+            git push origin ${{ inputs.environment }} && \
+            echo "✅ Helm chart updated" && exit 0
+            echo "Push failed, retrying in 5s... (attempt $i)"
+            sleep 5
+          done
+          echo "::error::Failed to push after 5 attempts"
+          exit 1
+
+      - name: Output Summary
+        run: |
+          echo "## 🎯 Helm Chart Updated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | ${{ inputs.service-name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ inputs.image-tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Values File | \`microservices/${{ inputs.service-name }}/values-${{ inputs.environment }}.yaml\` |" >> $GITHUB_STEP_SUMMARY

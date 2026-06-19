@@ -1,0 +1,172 @@
+name: Reusable — Build, Scan & Push to ACR
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+        description: "Docker image name (without registry prefix), e.g. cogni-auth-service"
+      tag:
+        required: true
+        type: string
+        description: "Image tag to apply (e.g. v1.0.0 or dev-abc1234)"
+      is_production:
+        required: true
+        type: string
+        description: "Set to 'true' if this is a production build"
+      working_directory:
+        required: false
+        type: string
+        default: "."
+        description: "Working directory for the service"
+      dockerfile_path:
+        required: false
+        type: string
+        default: "Dockerfile"
+        description: "Path to the Dockerfile relative to repo root"
+      docker_context:
+        required: false
+        type: string
+        default: "."
+        description: "Docker build context path"
+      service_name:
+        required: false
+        type: string
+        default: ""
+        description: "SERVICE_NAME build arg (for backend services)"
+      next_public_server_ip:
+        required: false
+        type: string
+        default: "https://cognidispatch.g0ku1.online"
+        description: "NEXT_PUBLIC_SERVER_IP build arg (for frontend)"
+      trivy_severity:
+        required: false
+        type: string
+        default: "CRITICAL,HIGH"
+      sonar_project_key:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      ACR_USERNAME:
+        required: true
+      ACR_PASSWORD:
+        required: true
+      SONAR_TOKEN:
+        required: false
+      SONAR_HOST_URL:
+        required: false
+      SNYK_TOKEN:
+        required: false
+    outputs:
+      image_full:
+        value: ${{ jobs.build.outputs.image_full }}
+
+jobs:
+  build:
+    name: Build & Scan & Push
+    runs-on: ubuntu-latest
+    outputs:
+      image_full: ${{ steps.meta.outputs.image_full }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── SonarCloud Analysis (non-blocking) ─────────────────────────────
+      - name: SonarCloud Scan
+        if: inputs.sonar_project_key != ''
+        uses: sonarsource/sonarcloud-github-action@v3.0.0
+        continue-on-error: true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: ${{ inputs.working_directory }}
+          args: >
+            -Dsonar.projectKey=${{ inputs.sonar_project_key }}
+            -Dsonar.projectName=${{ inputs.sonar_project_key }}
+            -Dsonar.organization=gokulk18
+
+      # ── Snyk Vulnerability Scan (non-blocking) ─────────────────────────
+      - name: Snyk Dependency Scan
+        if: inputs.working_directory != ''
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          directory: ${{ inputs.working_directory }}
+          args: --severity-threshold=high
+
+      # ── Docker Setup ────────────────────────────────────────────────────
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: cogniregistry.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      # ── Resolve full image reference ────────────────────────────────────
+      - name: Resolve image metadata
+        id: meta
+        run: |
+          IMAGE_FULL="cogniregistry.azurecr.io/${{ inputs.image_name }}"
+          echo "image_full=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+          echo "Image will be: ${IMAGE_FULL}:${{ inputs.tag }}"
+
+      # ── Build image locally (for Trivy scan) ───────────────────────────
+      - name: Build Docker image (local, for scanning)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.docker_context }}
+          file: ${{ inputs.dockerfile_path }}
+          load: true
+          tags: ${{ steps.meta.outputs.image_full }}:scan-target
+          build-args: |
+            NEXT_PUBLIC_SERVER_IP=${{ inputs.next_public_server_ip }}
+            SERVICE_NAME=${{ inputs.service_name }}
+
+      # ── Trivy Container Scan ────────────────────────────────────────────
+      - name: Trivy container vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.image_full }}:scan-target
+          format: "table"
+          exit-code: "0"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: ${{ inputs.trivy_severity }}
+
+      # ── Push to ACR (prod always, dev optional) ─────────────────────────
+      - name: Push image to ACR
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.docker_context }}
+          file: ${{ inputs.dockerfile_path }}
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_full }}:${{ inputs.tag }}
+            ${{ inputs.is_production == 'true' && format('{0}:latest', steps.meta.outputs.image_full) || format('{0}:dev-latest', steps.meta.outputs.image_full) }}
+          build-args: |
+            NEXT_PUBLIC_SERVER_IP=${{ inputs.next_public_server_ip }}
+            SERVICE_NAME=${{ inputs.service_name }}
+
+      # ── Job Summary ─────────────────────────────────────────────────────
+      - name: Output Summary
+        run: |
+          echo "## ✅ Build & Push Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ steps.meta.outputs.image_full }}:${{ inputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.is_production == 'true' && 'Production 🚀' || 'Dev 🔧' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ inputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY

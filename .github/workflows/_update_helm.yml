@@ -51,7 +51,7 @@ jobs:
         with:
           repository: ${{ inputs.helm-repo }}
           token: ${{ secrets.HELM_REPO_PAT }}
-          ref: ${{ inputs.environment }}
+          ref: production
           fetch-depth: 0
 
       - name: Set file environment name
@@ -147,8 +147,8 @@ jobs:
 
           # Push with retry on race condition
           for i in {1..5}; do
-            git pull --rebase origin ${{ inputs.environment }} && \
-            git push origin ${{ inputs.environment }} && \
+            git pull --rebase origin production && \
+            git push origin production && \
             echo "✅ Helm chart updated" && exit 0
             echo "Push failed, retrying in 5s... (attempt $i)"
             sleep 5

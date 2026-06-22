@@ -49,10 +49,6 @@ on:
         type: string
         default: ""
     secrets:
-      ACR_USERNAME:
-        required: true
-      ACR_PASSWORD:
-        required: true
       AZURE_CLIENT_ID:
         required: true
       AZURE_CLIENT_SECRET:
@@ -148,6 +144,10 @@ jobs:
     needs: [scan]
     runs-on: ubuntu-latest
     environment: ${{ inputs.is_production == 'true' && 'production' || 'dev' }}
+    # OIDC token required for az acr login (token-based auth, no admin creds needed)
+    permissions:
+      id-token: write
+      contents: write
     outputs:
       image_full: ${{ steps.meta.outputs.image_full }}
 
@@ -157,10 +157,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Azure Login (Client Secret)
+      # ── Azure Login via OIDC ────────────────────────────────────────────
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}"}'
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Whitelist Runner IP in ACR Firewall
         id: acr_ip
@@ -169,7 +172,7 @@ jobs:
           echo "runner_ip=$IP" >> $GITHUB_OUTPUT
           az acr network-rule add --name cogniregistry --ip-address "$IP"
           echo "✅ Whitelisted $IP in ACR firewall — waiting for propagation..."
-          sleep 10
+          sleep 15
 
       # ── Docker Setup ────────────────────────────────────────────────────
       - name: Set up QEMU
@@ -178,12 +181,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # ── ACR Login via Azure token (no admin creds needed) ───────────────
       - name: Login to Azure Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: cogniregistry.azurecr.io
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+        run: az acr login --name cogniregistry
 
       # ── Resolve full image reference ────────────────────────────────────
       - name: Resolve image metadata

@@ -61,14 +61,12 @@ on:
         required: false
     outputs:
       image_full:
-        value: ${{ jobs.build.outputs.image_full }}
+        value: ${{ jobs.push.outputs.image_full }}
 
 jobs:
-  build:
-    name: Build & Scan & Push
+  scan:
+    name: Scan & Verify
     runs-on: ubuntu-latest
-    outputs:
-      image_full: ${{ steps.meta.outputs.image_full }}
 
     steps:
       - name: Checkout repository
@@ -76,11 +74,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── SonarCloud Analysis (non-blocking) ─────────────────────────────
+      # ── SonarCloud Analysis ─────────────────────────────────────────────
       - name: SonarCloud Scan
         if: inputs.sonar_project_key != ''
         uses: sonarsource/sonarcloud-github-action@v3.0.0
-        # continue-on-error removed to fail on Sonar errors
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
@@ -90,11 +87,10 @@ jobs:
             -Dsonar.projectName=${{ inputs.sonar_project_key }}
             -Dsonar.organization=gokulk18
 
-      # ── Snyk Vulnerability Scan (non-blocking) ─────────────────────────
+      # ── Snyk Vulnerability Scan ─────────────────────────────────────────
       - name: Snyk Dependency Scan
         if: inputs.working_directory != ''
         uses: snyk/actions/node@master
-        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
@@ -146,7 +142,43 @@ jobs:
           vuln-type: "os,library"
           severity: ${{ inputs.trivy_severity }}
 
-      # ── Push to ACR (prod always, dev optional) ─────────────────────────
+  push:
+    name: Build & Push to ACR
+    needs: [scan]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.is_production == 'true' && 'production' || 'dev' }}
+    outputs:
+      image_full: ${{ steps.meta.outputs.image_full }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Docker Setup ────────────────────────────────────────────────────
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: cogniregistry.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      # ── Resolve full image reference ────────────────────────────────────
+      - name: Resolve image metadata
+        id: meta
+        run: |
+          IMAGE_FULL="cogniregistry.azurecr.io/${{ inputs.image_name }}"
+          echo "image_full=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+          echo "Image will be: ${IMAGE_FULL}:${{ inputs.tag }}"
+
+      # ── Push to ACR ─────────────────────────────────────────────────────
       - name: Push image to ACR
         uses: docker/build-push-action@v5
         with:
@@ -159,7 +191,18 @@ jobs:
           build-args: |
             NEXT_PUBLIC_SERVER_IP=${{ inputs.next_public_server_ip }}
             SERVICE_NAME=${{ inputs.service_name }}
-# Approval gate removed - production deployments no longer require manual approval
+
+      # ── Create and Push Git Tag & Release ────────────────────────────────
+      - name: Create and Push Git Tag & Release
+        if: inputs.is_production == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ inputs.tag }}"
+          git push origin "${{ inputs.tag }}" || echo "Tag may already exist"
+          gh release create "${{ inputs.tag }}" --title "${{ inputs.tag }}" --notes "Production release ${{ inputs.tag }}" || echo "Release may already exist"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       # ── Job Summary ─────────────────────────────────────────────────────
       - name: Output Summary

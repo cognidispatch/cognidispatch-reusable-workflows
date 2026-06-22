@@ -183,7 +183,18 @@ jobs:
 
       # ── ACR Login via Azure token (no admin creds needed) ───────────────
       - name: Login to Azure Container Registry
-        run: az acr login --name cogniregistry
+        run: |
+          echo "Logging into ACR (with retry for firewall propagation)..."
+          for i in {1..6}; do
+            if az acr login --name cogniregistry; then
+              echo "✅ Successfully logged into ACR!"
+              exit 0
+            fi
+            echo "⚠️ Login failed (likely firewall propagating), retrying in 20 seconds ($i/6)..."
+            sleep 20
+          done
+          echo "❌ Failed to log into ACR after multiple attempts."
+          exit 1
 
       # ── Resolve full image reference ────────────────────────────────────
       - name: Resolve image metadata

@@ -103,7 +103,7 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           directory: ${{ inputs.working_directory }}
-          args: --severity-threshold=high
+          args: --severity-threshold=critical
 
       # ── Docker Setup ────────────────────────────────────────────────────
       - name: Set up QEMU

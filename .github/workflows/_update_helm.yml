@@ -111,10 +111,10 @@ jobs:
                   root_content = f.read()
 
               # Match the service block at 0 indentation
-              pattern = r"(^${KEY}:\s*\n)((\s+.*\n|\n)*)"
+              pattern = r"(^${KEY}:[ \t]*\r?\n)(([ \t]+.*\r?\n|\r?\n)*)"
               match = re.search(pattern, root_content, re.MULTILINE)
               if not match:
-                  pattern = r"(^${KEY}:.*?\n)((\s+.*\n|\n)*)"
+                  pattern = r"(^${KEY}:.*?\r?\n)(([ \t]+.*\r?\n|\r?\n)*)"
                   match = re.search(pattern, root_content, re.MULTILINE)
 
               if match:

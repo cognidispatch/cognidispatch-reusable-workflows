@@ -53,6 +53,12 @@ on:
         required: true
       ACR_PASSWORD:
         required: true
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
       SONAR_TOKEN:
         required: false
       SONAR_HOST_URL:
@@ -156,6 +162,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Whitelist Runner IP in ACR Firewall
+        id: acr_ip
+        run: |
+          IP=$(curl -s https://api.ipify.org)
+          echo "runner_ip=$IP" >> $GITHUB_OUTPUT
+          az acr network-rule add --name cogniregistry --ip-address "$IP"
+          echo "✅ Whitelisted $IP in ACR firewall — waiting for propagation..."
+          sleep 10
+
       # ── Docker Setup ────────────────────────────────────────────────────
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -204,13 +226,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      # ── Job Summary ─────────────────────────────────────────────────────
-      - name: Output Summary
+      - name: Remove Runner IP from ACR Firewall
+        if: always()
         run: |
-          echo "## ✅ Build & Push Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | \`${{ steps.meta.outputs.image_full }}:${{ inputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | ${{ inputs.is_production == 'true' && 'Production 🚀' || 'Dev 🔧' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag | \`${{ inputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          az acr network-rule remove --name cogniregistry --ip-address "${{ steps.acr_ip.outputs.runner_ip }}" || true
+          echo "🧹 Removed ${{ steps.acr_ip.outputs.runner_ip }} from ACR firewall"

@@ -83,12 +83,12 @@ jobs:
 
           # Use Python for reliable YAML key update
           python3 - <<EOF
-          import re, sys
+          import re, sys, os
 
+          # 1. Update microservice values file
           with open("${VALUES_FILE}", "r") as f:
               content = f.read()
 
-          # Replace imageTag value
           new_content = re.sub(
               r'(imageTag:\s*)(["\']?).*?\2(\s*$)',
               r'\g<1>"${TAG}"\3',
@@ -97,13 +97,43 @@ jobs:
           )
 
           if new_content == content:
-              print("WARNING: imageTag field not found or not updated!", file=sys.stderr)
-              sys.exit(1)
+              print("WARNING: imageTag field not found or not updated in microservice values!", file=sys.stderr)
+          else:
+              with open("${VALUES_FILE}", "w") as f:
+                  f.write(new_content)
+              print(f"✅ Updated microservice values file imageTag to: ${TAG}")
 
-          with open("${VALUES_FILE}", "w") as f:
-              f.write(new_content)
+          # 2. Update root values file
+          root_values_file = "values-${ENV}.yaml"
+          if os.path.exists(root_values_file):
+              print(f"Updating root values file {root_values_file} under key ${KEY} → imageTag: ${TAG}")
+              with open(root_values_file, "r") as f:
+                  root_content = f.read()
 
-          print(f"✅ Updated imageTag to: ${TAG}")
+              # Match the service block at 0 indentation
+              pattern = r"(^${KEY}:\s*\n)((\s+.*\n|\n)*)"
+              match = re.search(pattern, root_content, re.MULTILINE)
+              if not match:
+                  pattern = r"(^${KEY}:.*?\n)((\s+.*\n|\n)*)"
+                  match = re.search(pattern, root_content, re.MULTILINE)
+
+              if match:
+                  block_header = match.group(1)
+                  block_body = match.group(2)
+                  new_block_body = re.sub(
+                      r'(imageTag:\s*)(["\']?).*?\2(\s*$)',
+                      r'\g<1>"${TAG}"\3',
+                      block_body,
+                      flags=re.MULTILINE
+                  )
+                  new_root_content = root_content.replace(match.group(0), block_header + new_block_body)
+                  with open(root_values_file, "w") as f:
+                      f.write(new_root_content)
+                  print(f"✅ Updated root values file imageTag to: ${TAG}")
+              else:
+                  print(f"WARNING: Key ${KEY} not found in root {root_values_file}!", file=sys.stderr)
+          else:
+              print(f"WARNING: Root values file {root_values_file} not found!", file=sys.stderr)
           EOF
 
       - name: Commit and push changes
@@ -111,6 +141,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add microservices/${{ inputs.service-name }}/values-${{ steps.set_env.outputs.file_env }}.yaml
+          git add values-${{ steps.set_env.outputs.file_env }}.yaml
           git diff --staged --quiet && echo "No changes to commit" && exit 0
           git commit -m "ci: update ${{ inputs.service-name }} imageTag to ${{ inputs.image-tag }} [${{ inputs.environment }}] [skip ci]"
 

@@ -33,6 +33,8 @@ on:
       HELM_REPO_PAT:
         required: true
         description: "PAT with write access to cognidispatch-helm repo"
+      SLACK_WEBHOOK_URL:
+        required: false
 
 jobs:
   # ── Optional approval gate (production only) ──────────────────────────
@@ -166,3 +168,12 @@ jobs:
           echo "| Tag | \`${{ inputs.image-tag }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Values File | \`microservices/${{ inputs.service-name }}/values-${{ steps.set_env.outputs.file_env }}.yaml\` |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Send Slack Notification
+        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: ${{ job.status == 'success' && '#36a64f' || '#ec3c3c' }}
+          SLACK_TITLE: ${{ job.status == 'success' && '✅ Deployment Succeeded' || '🚨 Deployment Failed' }}
+          SLACK_MESSAGE: "Repository: `${{ github.repository }}`\nService: `${{ inputs.service-name }}`\nEnvironment: `${{ inputs.environment }}`\nImage Tag: `${{ inputs.image-tag }}`\nCommit: ${{ github.event.head_commit.message || 'Triggered manually or via PR' }}"

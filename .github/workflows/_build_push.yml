@@ -63,6 +63,8 @@ on:
         required: false
       SNYK_TOKEN:
         required: false
+      SLACK_WEBHOOK_URL:
+        required: false
     outputs:
       image_full:
         value: ${{ jobs.push.outputs.image_full }}
@@ -138,6 +140,15 @@ jobs:
           ignore-unfixed: true
           vuln-type: "os,library"
           severity: ${{ inputs.trivy_severity }}
+
+      - name: Notify Slack on failure
+        if: failure() && secrets.SLACK_WEBHOOK_URL != ''
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: "#ff0000"
+          SLACK_TITLE: "🚨 Build/Scan Failed: ${{ github.repository }}"
+          SLACK_MESSAGE: "Build/Scan stage failed for branch `${{ github.ref_name }}`. Check the logs."
 
   push:
     name: Build & Push to ACR
@@ -235,3 +246,12 @@ jobs:
         run: |
           az acr network-rule remove --name cogniregistry --ip-address "${{ steps.acr_ip.outputs.runner_ip }}" || true
           echo "🧹 Removed ${{ steps.acr_ip.outputs.runner_ip }} from ACR firewall"
+
+      - name: Notify Slack on failure
+        if: failure() && secrets.SLACK_WEBHOOK_URL != ''
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: "#ff0000"
+          SLACK_TITLE: "🚨 Push Failed: ${{ github.repository }}"
+          SLACK_MESSAGE: "Docker Push stage failed for branch `${{ github.ref_name }}`. Check the logs."

@@ -73,6 +73,8 @@ jobs:
   scan:
     name: Scan & Verify
     runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
     steps:
       - name: Checkout repository
@@ -142,7 +144,7 @@ jobs:
           severity: ${{ inputs.trivy_severity }}
 
       - name: Notify Slack on failure
-        if: failure() && secrets.SLACK_WEBHOOK_URL != ''
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -154,6 +156,8 @@ jobs:
     name: Build & Push to ACR
     needs: [scan]
     runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     environment: ${{ inputs.is_production == 'true' && 'production' || 'dev' }}
     # OIDC token required for az acr login (token-based auth, no admin creds needed)
     permissions:
@@ -248,7 +252,7 @@ jobs:
           echo "🧹 Removed ${{ steps.acr_ip.outputs.runner_ip }} from ACR firewall"
 
       - name: Notify Slack on failure
-        if: failure() && secrets.SLACK_WEBHOOK_URL != ''
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}

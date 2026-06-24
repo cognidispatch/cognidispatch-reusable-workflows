@@ -82,7 +82,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── SonarCloud Analysis ─────────────────────────────────────────────
       - name: SonarCloud Scan
         if: inputs.sonar_project_key != ''
         uses: sonarsource/sonarcloud-github-action@v3.0.0
@@ -95,7 +94,6 @@ jobs:
             -Dsonar.projectName=${{ inputs.sonar_project_key }}
             -Dsonar.organization=gokulk18
 
-      # ── Snyk Vulnerability Scan ─────────────────────────────────────────
       - name: Snyk Dependency Scan
         if: inputs.working_directory != ''
         uses: snyk/actions/node@master
@@ -105,14 +103,12 @@ jobs:
           directory: ${{ inputs.working_directory }}
           args: --severity-threshold=critical
 
-      # ── Docker Setup ────────────────────────────────────────────────────
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ── Resolve full image reference ────────────────────────────────────
       - name: Resolve image metadata
         id: meta
         run: |
@@ -120,7 +116,6 @@ jobs:
           echo "image_full=${IMAGE_FULL}" >> $GITHUB_OUTPUT
           echo "Image will be: ${IMAGE_FULL}:${{ inputs.tag }}"
 
-      # ── Build image locally (for Trivy scan) ───────────────────────────
       - name: Build Docker image (local, for scanning)
         uses: docker/build-push-action@v5
         with:
@@ -132,7 +127,6 @@ jobs:
             NEXT_PUBLIC_SERVER_IP=${{ inputs.next_public_server_ip }}
             SERVICE_NAME=${{ inputs.service_name }}
 
-      # ── Trivy Container Scan ────────────────────────────────────────────
       - name: Trivy container vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -159,7 +153,6 @@ jobs:
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     environment: ${{ inputs.is_production == 'true' && 'production' || 'dev' }}
-    # OIDC token required for az acr login (token-based auth, no admin creds needed)
     permissions:
       id-token: write
       contents: write
@@ -172,7 +165,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Azure Login via OIDC ────────────────────────────────────────────
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -189,14 +181,12 @@ jobs:
           echo "✅ Whitelisted $IP in ACR firewall — waiting for propagation..."
           sleep 15
 
-      # ── Docker Setup ────────────────────────────────────────────────────
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ── ACR Login via Azure token (no admin creds needed) ───────────────
       - name: Login to Azure Container Registry
         run: |
           echo "Logging into ACR (with retry for firewall propagation)..."
@@ -211,7 +201,6 @@ jobs:
           echo "❌ Failed to log into ACR after multiple attempts."
           exit 1
 
-      # ── Resolve full image reference ────────────────────────────────────
       - name: Resolve image metadata
         id: meta
         run: |
@@ -219,7 +208,6 @@ jobs:
           echo "image_full=${IMAGE_FULL}" >> $GITHUB_OUTPUT
           echo "Image will be: ${IMAGE_FULL}:${{ inputs.tag }}"
 
-      # ── Push to ACR ─────────────────────────────────────────────────────
       - name: Push image to ACR
         uses: docker/build-push-action@v5
         with:
@@ -233,7 +221,6 @@ jobs:
             NEXT_PUBLIC_SERVER_IP=${{ inputs.next_public_server_ip }}
             SERVICE_NAME=${{ inputs.service_name }}
 
-      # ── Create and Push Git Tag & Release ────────────────────────────────
       - name: Create and Push Git Tag & Release
         if: inputs.is_production == 'true'
         run: |

@@ -37,10 +37,7 @@ on:
         required: false
 
 jobs:
-  # ── Optional approval gate (production only) ──────────────────────────
-# Approval gate removed - production deployments no longer require manual approval
 
-  # ── Update Helm values file ──────────────────────────────────────────
   update-helm:
     name: "📦 Update Helm Values"
     runs-on: ubuntu-latest
@@ -74,7 +71,6 @@ jobs:
           KEY="${{ inputs.helm-value-key }}"
           TAG="${{ inputs.image-tag }}"
 
-          # Determine the values file to update
           VALUES_FILE="microservices/${SERVICE}/values-${ENV}.yaml"
 
           if [ ! -f "$VALUES_FILE" ]; then
@@ -84,11 +80,9 @@ jobs:
 
           echo "Updating $VALUES_FILE → imageTag: $TAG"
 
-          # Use Python for reliable YAML key update
           python3 - <<EOF
           import re, sys, os
 
-          # 1. Update microservice values file
           with open("${VALUES_FILE}", "r") as f:
               content = f.read()
 
@@ -106,14 +100,12 @@ jobs:
                   f.write(new_content)
               print(f"✅ Updated microservice values file imageTag to: ${TAG}")
 
-          # 2. Update root values file
           root_values_file = "values-${ENV}.yaml"
           if os.path.exists(root_values_file):
               print(f"Updating root values file {root_values_file} under key ${KEY} → imageTag: ${TAG}")
               with open(root_values_file, "r") as f:
                   root_content = f.read()
 
-              # Match the service block at 0 indentation
               pattern = r"(^${KEY}:[ \t]*\r?\n)(([ \t]+.*\r?\n|\r?\n)*)"
               match = re.search(pattern, root_content, re.MULTILINE)
               if not match:
@@ -148,7 +140,6 @@ jobs:
           git diff --staged --quiet && echo "No changes to commit" && exit 0
           git commit -m "ci: update ${{ inputs.service-name }} imageTag to ${{ inputs.image-tag }} [${{ inputs.environment }}] [skip ci]"
 
-          # Push with retry on race condition
           for i in {1..5}; do
             git pull --rebase origin production && \
             git push origin production && \
